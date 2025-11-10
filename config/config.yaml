@@ -1,0 +1,41 @@
+# 姿态分析模型配置
+
+# MediaPipe配置
+mediapipe:
+  static_image_mode: false
+  model_complexity: 2
+  min_detection_confidence: 0.5
+  min_tracking_confidence: 0.5
+
+# 视频配置
+video:
+  width: 640
+  height: 480
+  fps: 30
+
+# 模型配置
+model:
+  device: cpu  # 'cuda' 或 'cpu'
+  batch_size: 32
+
+# 日志配置
+logging:
+  enable: true  # 是否启用日志记录
+  log_dir: logs  # 日志保存目录
+  max_records: 10000  # 单个日志文件最大记录数
+  retention_days: 30  # 日志保留天数
+  console_output: true  # 是否在控制台实时打印检测结果（打印台风格）
+  record_interval: 0.5  # 🔥 高性能模式：0.5秒记录一次（2次/秒），配合20 FPS视频流
+
+# SSL/HTTPS 配置
+ssl:
+  enable: true  # 是否启用 SSL/HTTPS（开发环境建议false）
+  cert_file: certs/server.crt  # SSL 证书文件路径
+  key_file: certs/server.key  # SSL 私钥文件路径
+  # 如果使用自签名证书，客户端需要忽略证书验证
+
+# 服务器配置
+server:
+  host: 0.0.0.0
+  port: 8080
+  https_port: 8443  # HTTPS 端口（当 SSL 启用时） 

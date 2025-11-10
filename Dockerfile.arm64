@@ -1,0 +1,120 @@
+﻿# PostureAnalysisM - ARM64 runtime image (optimized for ARM64 targets)
+# Build with Docker Buildx (x86 hosts) or directly on native ARM64 machines.
+FROM python:3.10-alpine
+
+LABEL maintainer="PostureAnalysisM"
+LABEL description="Real-time Posture Analysis Server (ARM64) - 20 FPS High Performance Mode"
+LABEL version="3.0-arm64"
+LABEL architecture="arm64"
+
+WORKDIR /app
+
+ARG TARGETARCH
+RUN ARCH_CHECK="${TARGETARCH:-$(uname -m)}" && \
+    echo "Building for architecture: ${ARCH_CHECK}" && \
+    case "$ARCH_CHECK" in \
+        arm64|aarch64) echo "ARM64 builder detected";; \
+        *) echo "ERROR: builder architecture ${ARCH_CHECK} is not ARM64"; \
+           echo "       run: docker buildx build --platform linux/arm64 -f Dockerfile.arm64 --load ."; \
+           exit 1 ;; \
+    esac
+    
+# Use the Tsinghua University mirrors to speed up downloads within China.
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/repositories
+
+# Install system libraries required by OpenCV/MediaPipe and build tooling for numpy/scipy stacks.
+RUN apk add --no-cache \
+        glib \
+        libsm \
+        libxrender \
+        libxext \
+        mesa-gl \
+        libgomp \
+        curl \
+        build-base \
+        gcc \
+        g++ \
+        gfortran \
+        openblas-dev \
+        lapack-dev \
+        hdf5-dev \
+        pkgconfig \
+        libffi-dev \
+        openssl-dev
+
+# Copy application files.
+COPY requirements_arm64_runtime.txt ./
+COPY src/ ./src/
+COPY model/ ./model/
+COPY models/ ./models/
+COPY config/ ./config/
+COPY assets/ ./assets/
+
+
+
+# Upgrade pip first (Tsinghua mirror for faster downloads inside CN).
+RUN python -m pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple/ && \
+    rm -rf /root/.cache/pip
+
+# 1) numpy - install from bundled ARM64 wheel (减少编译时间)
+RUN pip install --no-cache-dir numpy==1.24.3 -i https://pypi.tuna.tsinghua.edu.cn/simple/ --no-deps
+
+# 2) protobuf pin compatible with TF 2.10/MediaPipe 0.10.x.
+RUN pip install --no-cache-dir protobuf==3.20.6 -i https://pypi.tuna.tsinghua.edu.cn/simple/ --no-deps
+
+# 3) MediaPipe - install from the pre-bundled ARM64 wheel
+RUN pip install --no-cache-dir mediapipe==0.10.9 -i https://pypi.tuna.tsinghua.edu.cn/simple/ --no-deps
+
+
+RUN pip install --no-cache-dir -r requirements_arm64.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
+
+
+# 5) TensorFlow for ARM64 (best-effort install; non-critical for pose classification fallback).
+RUN echo "Installing TensorFlow for ARM64..." && \
+    pip install --no-cache-dir tensorflow-aarch64==2.10.0 -i https://pypi.tuna.tsinghua.edu.cn/simple/ 2>/dev/null || \
+    pip install --no-cache-dir tensorflow==2.10.0 -i https://pypi.tuna.tsinghua.edu.cn/simple/ 2>/dev/null || \
+    echo "TensorFlow installation skipped (core pose detection unaffected)."
+
+# Remove caches, headers, test directories to keep the image lean.
+RUN find /usr/local/lib/python3.10 -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.10 -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.10 -name "*.pyc" -delete && \
+    find /usr/local/lib/python3.10 -name "*.pyo" -delete && \
+    find /usr/local/lib/python3.10 -name "*.c" -delete 2>/dev/null || true && \
+    find /usr/local/lib/python3.10 -name "*.cpp" -delete 2>/dev/null || true && \
+    find /usr/local/lib/python3.10 -name "*.pyx" -delete 2>/dev/null || true && \
+    rm -rf /root/.cache/pip && rm -rf /tmp/* /var/tmp/*
+
+# Generate self-signed certificates for HTTPS endpoints (valid 10 years).
+RUN mkdir -p /app/certs && \
+    python src/generate_ssl_cert.py certs 3650 && \
+    echo "Self-signed SSL certificate generated (valid for 10 years)."
+
+# Copy MediaPipe pose models into the package so runtime loads local assets.
+RUN MEDIAPIPE_PATH=$(python -c "import mediapipe, os; print(os.path.dirname(mediapipe.__file__))") && \
+    mkdir -p "$MEDIAPIPE_PATH/modules/pose_landmark/" && \
+    if [ -f ./models/pose_landmark_heavy.tflite ]; then \
+        cp ./models/pose_landmark_heavy.tflite "$MEDIAPIPE_PATH/modules/pose_landmark/"; \
+    fi && \
+    if [ -f ./models/pose_landmark_full.tflite ]; then \
+        cp ./models/pose_landmark_full.tflite "$MEDIAPIPE_PATH/modules/pose_landmark/"; \
+    fi && \
+    if [ -f ./models/pose_landmark_cpu.binarypb ]; then \
+        cp ./models/pose_landmark_cpu.binarypb "$MEDIAPIPE_PATH/modules/pose_landmark/"; \
+    fi && \
+    echo "MediaPipe models copied." && \
+    find "$MEDIAPIPE_PATH" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    TF_CPP_MIN_LOG_LEVEL=2 \
+    OPENCV_VIDEOIO_PRIORITY_MSMF=0 \
+    OPENBLAS_NUM_THREADS=4 \
+    OMP_NUM_THREADS=4
+
+EXPOSE 8080 8443
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f -k http://localhost:8080/health || curl -f -k https://localhost:8443/health || exit 1
+
+CMD ["python", "-m", "src.socketio_server"]

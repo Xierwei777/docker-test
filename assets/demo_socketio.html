@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时姿态分析 - Socket.IO</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch; /* 拉伸填满宽度 */
+            padding: 0; /* 移除边距 */
+            margin: 0;
+        }
+
+        .container {
+            background: white;
+            padding: 20px 0; /* 上下20px，左右0px - 填满宽度 */
+            max-width: 100%; /* 填满整个屏幕宽度 */
+            width: 100%;
+        }
+
+        /* 头部区域 */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 0 20px; /* 添加左右内边距 */
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .header-left {
+            flex: 1;
+            min-width: 300px;
+        }
+
+        h1 {
+            color: #333;
+            margin: 0;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            color: #666;
+            margin: 5px 0 0 0;
+            font-size: 1em;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+
+        .status-dot {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.5);
+            animation: pulse 2s infinite;
+            border: 2px solid white;
+        }
+
+        .status-dot.connected {
+            background: #4CAF50;
+            box-shadow: 0 0 10px #4CAF50;
+        }
+
+        .status-dot.streaming {
+            background: #FFD700;
+            box-shadow: 0 0 10px #FFD700;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* 主布局：上下分栏 */
+        .main-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 0 20px; /* 添加左右内边距 */
+        }
+
+        /* 上方：视频流区域 */
+        .video-section {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* 下方：数据展示区域 */
+        .data-section {
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 视频容器：两个视频横向排列 */
+        .video-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        /* 响应式：窄屏时视频竖排 */
+        @media (max-width: 1200px) {
+            .video-container {
+                grid-template-columns: 1fr; /* 窄屏时视频竖排 */
+            }
+
+            .video-box {
+                min-height: 300px; /* 窄屏时调整最小高度 */
+            }
+
+            .log-monitor {
+                max-height: 600px; /* 窄屏时降低高度 */
+            }
+
+            .log-output {
+                min-height: 300px;
+                max-height: 450px;
+            }
+        }
+
+        /* 响应式：窄屏时头部垂直布局 */
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 0 15px; /* 移动端稍小的内边距 */
+            }
+
+            .main-layout {
+                padding: 0 15px; /* 移动端稍小的内边距 */
+            }
+
+            .header-left {
+                width: 100%;
+                min-width: auto;
+            }
+
+            .status-bar {
+                width: 100%;
+            }
+
+            .video-box {
+                min-height: 250px; /* 移动端调整最小高度 */
+            }
+
+            .log-monitor {
+                max-height: 500px; /* 移动端进一步降低高度 */
+            }
+
+            .log-output {
+                min-height: 250px;
+                max-height: 350px;
+            }
+        }
+
+        .video-box {
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+            aspect-ratio: 4/3;
+            min-height: 350px; /* 最小高度，上下布局时稍小一些 */
+        }
+
+        .video-box video,
+        .video-box img,
+        .video-box canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+
+        /* 隐藏空 img 的破损图标 */
+        .video-box img[src=""],
+        .video-box img:not([src]) {
+            opacity: 0;
+        }
+
+        /* 为空视频添加占位符 */
+        .video-box.waiting {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea20 0%, #764ba220 100%);
+        }
+
+        .video-box.waiting::before {
+            content: '⏳ 等待视频流...';
+            color: #667eea;
+            font-size: 1.2em;
+            font-weight: bold;
+            text-align: center;
+            position: absolute;
+            z-index: 1;
+        }
+
+        .video-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 25px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+
+
+        /* 打印台风格日志输出 */
+        .log-monitor {
+            background: #ffffff;
+            border-radius: 10px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            max-height: 800px; /* 固定最大高度，避免撑长页面 */
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .log-monitor.active {
+            display: flex;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .log-title {
+            color: #333;
+            font-weight: bold;
+            font-size: 1.1em;
+            font-family: 'Courier New', monospace;
+        }
+
+        .log-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .log-btn {
+            padding: 5px 15px;
+            font-size: 0.85em;
+            border-radius: 5px;
+            cursor: pointer;
+            border: 1px solid #667eea;
+            background: transparent;
+            color: #667eea;
+            transition: all 0.3s;
+        }
+
+        .log-btn:hover {
+            background: #667eea;
+            color: #ffffff;
+        }
+
+        .log-output {
+            background: #f5f5f5;
+            border-radius: 5px;
+            padding: 15px;
+            flex: 1 1 auto;
+            overflow-y: auto; /* 内置滚动条 */
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            line-height: 1.5;
+            color: #333;
+            border: 1px solid #e0e0e0;
+            min-height: 400px; /* 最小高度 */
+            max-height: 650px; /* 最大高度，确保有滚动条 */
+        }
+
+        .log-output::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .log-output::-webkit-scrollbar-track {
+            background: #f0f0f0;
+        }
+
+        .log-output::-webkit-scrollbar-thumb {
+            background: #999;
+            border-radius: 4px;
+        }
+        
+        .log-output::-webkit-scrollbar-thumb:hover {
+            background: #666;
+        }
+
+        .log-line {
+            padding: 2px 0;
+            white-space: nowrap;
+            overflow-x: auto;
+        }
+
+        .log-line.header {
+            color: #667eea;
+            font-weight: bold;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 5px;
+            margin-bottom: 5px;
+        }
+
+        .log-line.separator {
+            color: #ccc;
+            margin: 5px 0;
+        }
+
+        .log-number {
+            color: #2196F3;
+        }
+
+        .log-time {
+            color: #FF9800;
+        }
+
+        .log-status-detect {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .log-status-notarget {
+            color: #f44336;
+            font-weight: bold;
+        }
+
+        .log-pose {
+            color: #9C27B0;
+            font-weight: bold;
+        }
+
+        .log-conf {
+            color: #00BCD4;
+        }
+
+        .log-points {
+            color: #8BC34A;
+        }
+
+        /* 格式说明面板 */
+        .format-guide {
+            margin-top: 15px;
+            margin-bottom: 10px;
+            background: #fafafa;
+            border-radius: 5px;
+            padding: 15px;
+            display: none;
+            flex-shrink: 0;
+            border: 1px solid #e0e0e0;
+        }
+
+        .format-guide.active {
+            display: block;
+        }
+
+        .format-guide h4 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1em;
+        }
+
+        .format-guide table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
+        }
+
+        .format-guide th,
+        .format-guide td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+            color: #666;
+        }
+
+        .format-guide th {
+            color: #667eea;
+            font-weight: bold;
+            background: #f5f5f5;
+        }
+
+        .format-guide code {
+            background: #e8eaf6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #667eea;
+            font-family: 'Courier New', monospace;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 0.75em;
+            font-weight: bold;
+        }
+
+        .badge-new {
+            background: #667eea;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部：标题与状态栏 -->
+        <div class="header">
+            <div class="header-left">
+        <h1>🏃 实时姿态分析系统</h1>
+        <p class="subtitle">基于 MediaPipe 和 Flask-SocketIO</p>
+            </div>
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div class="status-dot" id="connectionStatus"></div>
+                    <span id="statusText">服务器未连接</span>
+            </div>
+            </div>
+        </div>
+
+        <!-- 主布局：左右分栏 -->
+        <div class="main-layout">
+            <!-- 左侧：视频流区域 -->
+            <div class="video-section">
+        <div class="video-container">
+            <div class="video-box">
+                <div class="video-label">📹 摄像头</div>
+                <video id="localVideo" autoplay playsinline muted></video>
+            </div>
+                    <div class="video-box waiting" id="processedVideoBox">
+                <div class="video-label">🎯 姿态分析</div>
+                <img id="processedVideo" src="" alt="等待视频流...">
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="btn-success" id="startBtn" onclick="startCamera()">启动摄像头</button>
+            <button class="btn-primary" id="streamBtn" onclick="startStream()" disabled>开始分析</button>
+            <button class="btn-danger" id="stopBtn" onclick="stopStream()" disabled>停止分析</button>
+                </div>
+            </div>
+
+            <!-- 右侧：数据展示区域 -->
+            <div class="data-section">
+                <!-- 打印台风格日志监控 -->
+                <div class="log-monitor active" id="logMonitor">
+                    <div class="log-header">
+                        <div class="log-title">
+                            📺 MONITOR <span class="badge badge-new">NEW</span>
+                        </div>
+                        <div class="log-controls">
+                            <button class="log-btn" onclick="toggleFormatGuide()">📖 格式</button>
+                            <button class="log-btn" onclick="clearLogs()">🗑️ 清空</button>
+                            <button class="log-btn" onclick="toggleAutoScroll()">
+                                <span id="autoScrollText">🔝 置顶</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 格式说明 -->
+                    <div class="format-guide" id="formatGuide">
+                        <h4>📋 输出格式说明</h4>
+                        <p style="color: #FF9800; margin-bottom: 10px; font-size: 0.9em;">
+                            💡 <strong>提示</strong>: 最新记录在顶部，向下滚动查看历史记录
+                        </p>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>字段</th>
+                                    <th>说明</th>
+                                    <th>示例</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><code>#00001</code></td>
+                                    <td>记录序号（5位数）</td>
+                                    <td>#00001, #00123</td>
+                                </tr>
+                                <tr>
+                                    <td><code>时间戳</code></td>
+                                    <td>精确到毫秒的时间</td>
+                                    <td>2025-11-04 14:30:15.234</td>
+                                </tr>
+                                <tr>
+                                    <td><code>[ DETECT ]</code></td>
+                                    <td>检测到目标</td>
+                                    <td>绿色显示</td>
+                                </tr>
+                                <tr>
+                                    <td><code>[NO TARGET]</code></td>
+                                    <td>未检测到目标</td>
+                                    <td>红色显示</td>
+                                </tr>
+                                <tr>
+                                    <td><code>Pose</code></td>
+                                    <td>姿态类型</td>
+                                    <td>STANDING, SIT, STOOP, LYING, KNEEL</td>
+                                </tr>
+                                <tr>
+                                    <td><code>Conf</code></td>
+                                    <td>置信度（0.00-1.00）</td>
+                                    <td>0.95</td>
+                                </tr>
+                                <tr>
+                                    <td><code>Points</code></td>
+                                    <td>检测到的关键点数量</td>
+                                    <td>33</td>
+                                </tr>
+                            </tbody>
+                        </table>
+        </div>
+
+                    <div class="log-output" id="logOutput">
+                        <div class="log-line header">
+                            ══════════════════════════════════════════════════════════
+                        </div>
+                        <div class="log-line header">
+                            📊 REAL-TIME LOG (Latest on Top ⬆️ | Scroll Down for History ⬇️)
+                        </div>
+                        <div class="log-line header">
+                            ══════════════════════════════════════════════════════════
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        let socket;
+        let localStream;
+        let isStreaming = false;
+        let canvas = document.createElement('canvas');
+        let ctx = canvas.getContext('2d');
+        let logRecordCount = 0;
+        let autoScroll = true;
+        let maxLogLines = 500; // 最多保留500条记录
+        
+        // 🔥 优化：性能相关变量
+        let canvasInitialized = false;  // Canvas 是否已初始化
+        let jpegQuality = 0.5;  // 🔥 20 FPS模式：降低初始JPEG质量到0.5（自适应0.4-0.6）
+        let frameInterval = 50;  // 🔥 自适应帧率：初始50ms（20 FPS），根据网络自动调整
+        let performanceStats = {
+            encodeTime: 0,
+            frameSize: 0,
+            lastUpdateTime: Date.now()
+        };
+
+        // 初始化 Socket.IO 连接
+        function initSocket() {
+            socket = io({
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionAttempts: 5
+            });
+
+            socket.on('connect', () => {
+                console.log('已连接到服务器');
+                updateStatus('connected', '服务器已连接');
+            });
+
+            socket.on('disconnect', () => {
+                console.log('已断开连接');
+                updateStatus('disconnected', '❌ 服务器已断开');
+                stopStream();
+            });
+
+            socket.on('server_response', (data) => {
+                console.log('服务器响应:', data);
+            });
+            
+            // 🔥 优化：网络质量自适应（20 FPS模式 - 更激进的压缩 + 帧率降级）
+            socket.on('network_quality', (data) => {
+                const skipRate = data.skip_rate;
+                
+                // 🔥 自适应帧率降级机制
+                if (skipRate > 80) {
+                    // 网络非常慢 → 降至 5 FPS
+                    frameInterval = 200;
+                    jpegQuality = 0.4;
+                    console.log('🔴 [Auto-Throttle] Network critical → 5 FPS, Quality 0.4');
+                } else if (skipRate > 60) {
+                    // 网络慢 → 降至 10 FPS
+                    frameInterval = 100;
+                    jpegQuality = 0.45;
+                    console.log('🟠 [Auto-Throttle] Network slow → 10 FPS, Quality 0.45');
+                } else if (skipRate > 40) {
+                    // 网络中等 → 15 FPS
+                    frameInterval = 67;
+                    jpegQuality = 0.5;
+                    console.log('🟡 [Auto-Throttle] Network medium → 15 FPS, Quality 0.5');
+                } else if (skipRate < 25) {
+                    // 网络很好 → 20 FPS
+                    frameInterval = 50;
+                    jpegQuality = 0.6;
+                    console.log('🟢 [Auto-Throttle] Network excellent → 20 FPS, Quality 0.6');
+                }
+                // 25-40%范围保持当前设置，避免频繁切换
+            });
+
+            socket.on('processed_frame', (data) => {
+                // 显示处理后的图像
+                const processedVideo = document.getElementById('processedVideo');
+                const processedVideoBox = document.getElementById('processedVideoBox');
+                
+                processedVideo.src = data.frame;
+                
+                // 移除等待状态（隐藏占位符）
+                if (processedVideoBox.classList.contains('waiting')) {
+                    processedVideoBox.classList.remove('waiting');
+                }
+                
+                // 更新姿态数据
+                if (data.pose_data) {
+                    updatePoseData(data.pose_data);
+                }
+            });
+
+            socket.on('error', (data) => {
+                console.error('错误:', data.message);
+                alert('错误: ' + data.message);
+            });
+
+            socket.on('stream_started', () => {
+                console.log('视频流已开始');
+            });
+
+            socket.on('stream_stopped', () => {
+                console.log('视频流已停止');
+            });
+        }
+
+        // 启动摄像头
+        async function startCamera() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
+
+                document.getElementById('localVideo').srcObject = localStream;
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('streamBtn').disabled = false;
+                console.log('摄像头已启动');
+            } catch (error) {
+                console.error('启动摄像头失败:', error);
+                alert('无法访问摄像头: ' + error.message);
+            }
+        }
+
+        // 开始视频流分析
+        function startStream() {
+            if (isStreaming) return;
+            
+            isStreaming = true;
+            socket.emit('start_stream');
+            
+            document.getElementById('streamBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            updateStatus('streaming', '🎯 正在分析姿态...');
+
+            // 清空之前的日志并初始化
+            clearLogs();
+
+            // 开始发送视频帧
+            sendFrames();
+        }
+
+        // 停止视频流分析
+        function stopStream() {
+            isStreaming = false;
+            socket.emit('stop_stream');
+            
+            document.getElementById('streamBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            updateStatus('connected', '服务器已连接');
+            
+            // 🔥 优化：重置 Canvas 标志
+            canvasInitialized = false;
+            
+            // 恢复等待状态
+            const processedVideoBox = document.getElementById('processedVideoBox');
+            if (!processedVideoBox.classList.contains('waiting')) {
+                processedVideoBox.classList.add('waiting');
+            }
+        }
+
+        // 发送视频帧到服务器
+        function sendFrames() {
+            if (!isStreaming) return;
+
+            const video = document.getElementById('localVideo');
+            
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                // 🔥 优化：性能监控开始
+                const startEncode = performance.now();
+                
+                // 🔥 优化：降低分辨率到50%，只设置一次
+                if (!canvasInitialized) {
+                    canvas.width = Math.floor(video.videoWidth * 0.5);
+                    canvas.height = Math.floor(video.videoHeight * 0.5);
+                    canvasInitialized = true;
+                    console.log(`[Optimize] Canvas size: ${canvas.width}x${canvas.height} (50% of original)`);
+                }
+                
+                // 绘制视频帧到 canvas（缩放）
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // 🔥 优化：使用自适应JPEG质量
+                const frameData = canvas.toDataURL('image/jpeg', jpegQuality).split(',')[1];
+                
+                // 🔥 性能监控：记录编码时间和大小
+                performanceStats.encodeTime = performance.now() - startEncode;
+                performanceStats.frameSize = frameData.length;
+                
+                // 每10秒打印一次性能统计
+                const now = Date.now();
+                if (now - performanceStats.lastUpdateTime > 10000) {
+                    console.log(`[Performance] Encode: ${performanceStats.encodeTime.toFixed(1)}ms | Size: ${(performanceStats.frameSize / 1024).toFixed(1)}KB | Quality: ${jpegQuality}`);
+                    performanceStats.lastUpdateTime = now;
+                }
+                
+                // 发送到服务器
+                socket.emit('video_frame', { frame: frameData });
+            }
+
+            // 🔥 高性能模式：自适应帧率（5-20 FPS根据网络自动调整）
+            // 注意：日志记录频率由服务器端的 record_interval 配置控制
+            setTimeout(() => {
+                if (isStreaming) {
+                    sendFrames();
+                }
+            }, frameInterval);  // 自适应间隔：50ms(20FPS) - 200ms(5FPS)
+        }
+
+        // 更新状态显示
+        function updateStatus(status, text) {
+            const statusDot = document.getElementById('connectionStatus');
+            const statusText = document.getElementById('statusText');
+            
+            statusDot.className = 'status-dot ' + status;
+            statusText.textContent = text;
+        }
+
+        // 更新姿态数据显示
+        function updatePoseData(poseData) {
+            // 只更新打印台风格日志（姿态数据卡片已移除）
+            addLogRecord(poseData);
+        }
+
+        // 添加打印台风格日志记录（从下往上刷新）
+        function addLogRecord(poseData) {
+            logRecordCount++;
+            
+            const time = poseData.datetime || new Date().toISOString().replace('T', ' ').substring(0, 23);
+            const pose = (poseData.pose || 'Unknown').toUpperCase();
+            const hasTarget = poseData.has_target !== false;
+            const confidence = poseData.confidence || 0.0;
+            const points = poseData.landmarks_count || 0;
+
+            // 生成状态标记
+            let statusHtml, poseDisplay;
+            if (!hasTarget || pose === 'NO TARGET') {
+                statusHtml = '<span class="log-status-notarget">[NO TARGET]</span>';
+                poseDisplay = 'No Target';
+            } else {
+                statusHtml = '<span class="log-status-detect">[ DETECT ]</span>';
+                poseDisplay = pose.padEnd(12, ' ');
+            }
+
+            // 格式化记录行
+            const logLine = `<span class="log-number">#${String(logRecordCount).padStart(5, '0')}</span> | ` +
+                          `<span class="log-time">${time}</span> | ` +
+                          `${statusHtml} | ` +
+                          `Pose: <span class="log-pose">${poseDisplay}</span> | ` +
+                          `Conf: <span class="log-conf">${confidence.toFixed(2)}</span> | ` +
+                          `Points: <span class="log-points">${String(points).padStart(2, ' ')}</span>`;
+
+            const logOutput = document.getElementById('logOutput');
+            const logLineDiv = document.createElement('div');
+            logLineDiv.className = 'log-line';
+            logLineDiv.innerHTML = logLine;
+            
+            // 找到标题行后的第一个位置（跳过3个header）
+            const headerCount = 3;
+            const firstContentIndex = headerCount;
+            
+            // 在标题后插入新记录（最新记录在最上面）
+            if (logOutput.children.length > headerCount) {
+                logOutput.insertBefore(logLineDiv, logOutput.children[firstContentIndex]);
+            } else {
+                logOutput.appendChild(logLineDiv);
+            }
+
+            // 每50条记录添加分隔线
+            if (logRecordCount % 50 === 0) {
+                const separator = document.createElement('div');
+                separator.className = 'log-line separator';
+                separator.textContent = '─'.repeat(60);
+                if (logOutput.children.length > headerCount) {
+                    logOutput.insertBefore(separator, logOutput.children[firstContentIndex]);
+                } else {
+                    logOutput.appendChild(separator);
+                }
+            }
+
+            // 限制最大行数（删除最底部的旧记录）
+            while (logOutput.children.length > maxLogLines + headerCount) {
+                logOutput.removeChild(logOutput.lastChild);
+            }
+
+            // 自动滚动到顶部（显示最新记录）
+            if (autoScroll) {
+                logOutput.scrollTop = 0;
+            }
+        }
+
+        // 清空日志
+        function clearLogs() {
+            const logOutput = document.getElementById('logOutput');
+            logOutput.innerHTML = `
+                <div class="log-line header">
+                    ══════════════════════════════════════════════════════════
+                </div>
+                <div class="log-line header">
+                    📊 REAL-TIME LOG (Latest on Top ⬆️ | Scroll Down for History ⬇️)
+                </div>
+                <div class="log-line header">
+                    ══════════════════════════════════════════════════════════
+                </div>
+            `;
+            logRecordCount = 0;
+        }
+
+        // 切换格式说明显示
+        function toggleFormatGuide() {
+            const guide = document.getElementById('formatGuide');
+            guide.classList.toggle('active');
+        }
+
+        // 切换自动滚动
+        function toggleAutoScroll() {
+            autoScroll = !autoScroll;
+            const text = document.getElementById('autoScrollText');
+            text.textContent = autoScroll ? '🔝 置顶' : '⏸️ 暂停';
+        }
+
+        // 页面加载时初始化
+        window.onload = () => {
+            initSocket();
+        };
+
+        // 页面卸载时清理
+        window.onbeforeunload = () => {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+            if (socket) {
+                socket.disconnect();
+            }
+        };
+    </script>
+</body>
+</html>
+

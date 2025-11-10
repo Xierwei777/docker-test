@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC 姿态识别 Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+
+        .video-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .status {
+            margin-bottom: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #e3f2fd;
+        }
+
+        .debug {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        video {
+            border: 2px solid #ddd;
+            border-radius: 4px;
+        }
+
+        button {
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+
+        button:hover {
+            background-color: #1976D2;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>实时姿态识别 (WebRTC)</h1>
+
+    <div class="status" id="status">
+        状态: 准备连接...
+    </div>
+
+    <div class="container">
+        <div class="video-section">
+            <h3>原始视频</h3>
+            <video id="localVideo" width="640" height="480" autoplay muted></video>
+            <br>
+            <button id="startBtn" onclick="startCamera()">开始摄像头</button>
+            <button id="stopBtn" onclick="stopCamera()" disabled>停止摄像头</button>
+        </div>
+
+        <div class="video-section">
+            <h3>处理后视频</h3>
+            <video id="remoteVideo" width="640" height="480" autoplay></video>
+            <br>
+            <button id="connectBtn" onclick="connectWebRTC()" disabled>连接WebRTC</button>
+            <button id="disconnectBtn" onclick="disconnectWebRTC()" disabled>断开连接</button>
+        </div>
+    </div>
+
+    <div class="debug" id="debug">
+        调试信息将在这里显示...
+    </div>
+
+    <script>
+        let localStream = null;
+        let pc = null;
+        let localVideo = document.getElementById('localVideo');
+        let remoteVideo = document.getElementById('remoteVideo');
+        let statusDiv = document.getElementById('status');
+        let debugDiv = document.getElementById('debug');
+
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            debugDiv.innerHTML += `[${timestamp}] ${message}<br>`;
+            debugDiv.scrollTop = debugDiv.scrollHeight;
+            console.log(message);
+        }
+
+        function updateStatus(message) {
+            statusDiv.textContent = '状态: ' + message;
+            log(message);
+        }
+
+        async function startCamera() {
+            try {
+                updateStatus('正在获取摄像头权限...');
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480 },
+                    audio: false
+                });
+                localVideo.srcObject = localStream;
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                document.getElementById('connectBtn').disabled = false;
+                updateStatus('摄像头已启动，可以连接WebRTC');
+                log('摄像头轨道数量: ' + localStream.getTracks().length);
+            } catch (error) {
+                updateStatus('摄像头启动失败: ' + error.message);
+                log('摄像头错误: ' + error.message);
+                console.error('摄像头错误:', error);
+            }
+        }
+
+        function stopCamera() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localVideo.srcObject = null;
+                localStream = null;
+            }
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('connectBtn').disabled = true;
+            document.getElementById('disconnectBtn').disabled = true;
+            updateStatus('摄像头已停止');
+        }
+
+        async function connectWebRTC() {
+            if (!localStream) {
+                updateStatus('请先启动摄像头');
+                return;
+            }
+
+            try {
+                updateStatus('正在建立WebRTC连接...');
+
+                // 创建RTCPeerConnection
+                pc = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' }
+                    ]
+                });
+
+                // 添加本地轨道
+                localStream.getTracks().forEach(track => {
+                    log('添加轨道: ' + track.kind);
+                    pc.addTrack(track, localStream);
+                });
+
+                // 处理远程轨道
+                pc.ontrack = function (event) {
+                    log('收到远程轨道: ' + event.track.kind);
+                    if (event.track.kind === 'video') {
+                        log('设置远程视频流');
+                        remoteVideo.srcObject = event.streams[0];
+
+                        // 监听视频加载
+                        remoteVideo.onloadedmetadata = function () {
+                            log('远程视频元数据加载完成');
+                        };
+
+                        remoteVideo.onplay = function () {
+                            log('远程视频开始播放');
+                        };
+
+                        remoteVideo.onerror = function (e) {
+                            log('远程视频错误: ' + e);
+                        };
+                    }
+                };
+
+                // 连接状态变化
+                pc.onconnectionstatechange = function () {
+                    updateStatus('WebRTC连接状态: ' + pc.connectionState);
+                    if (pc.connectionState === 'connected') {
+                        document.getElementById('disconnectBtn').disabled = false;
+                        document.getElementById('connectBtn').disabled = true;
+                        log('WebRTC连接成功建立');
+                    }
+                };
+
+                // ICE候选处理
+                pc.onicecandidate = function (event) {
+                    if (event.candidate) {
+                        log('发送ICE候选: ' + event.candidate.candidate);
+                    }
+                };
+
+                // 创建offer
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                log('创建offer完成');
+
+                // 发送offer到服务器
+                const response = await fetch('/offer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sdp: pc.localDescription.sdp,
+                        type: pc.localDescription.type
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('服务器响应错误: ' + response.status);
+                }
+
+                const answer = await response.json();
+                log('收到服务器应答');
+
+                // 设置远程描述
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                log('设置远程描述完成');
+
+                updateStatus('WebRTC连接已建立');
+
+            } catch (error) {
+                updateStatus('WebRTC连接失败: ' + error.message);
+                log('WebRTC错误: ' + error.message);
+                console.error('WebRTC错误:', error);
+                if (pc) {
+                    pc.close();
+                    pc = null;
+                }
+            }
+        }
+
+        function disconnectWebRTC() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            remoteVideo.srcObject = null;
+            document.getElementById('disconnectBtn').disabled = true;
+            document.getElementById('connectBtn').disabled = false;
+            updateStatus('WebRTC连接已断开');
+        }
+
+        // 页面卸载时清理
+        window.addEventListener('beforeunload', function () {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+            if (pc) {
+                pc.close();
+            }
+        });
+    </script>
+</body>
+
+</html>

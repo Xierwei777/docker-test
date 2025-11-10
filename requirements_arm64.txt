@@ -1,0 +1,33 @@
+# ARM64/aarch64 兼容版本
+# Python 3.10 + ARM64 优化依赖
+
+# 核心依赖 - ARM64 兼容版本
+mediapipe==0.10.9
+opencv-python==4.8.1.78
+numpy==1.24.3
+scipy==1.11.4
+matplotlib==3.8.2
+Flask==2.3.3
+Pillow==10.1.0
+
+# TensorFlow Lite (推荐用于 ARM 平台，更轻量)
+# 如果需要完整 TensorFlow，可能需要从源码编译或使用特定 ARM 预编译包
+tensorflow==2.15.0  # 较新版本对 ARM64 支持更好
+# 或者使用轻量级版本:
+# tflite-runtime==2.14.0
+
+protobuf==3.20.3
+
+# PyQt5 在 ARM 上可能需要额外配置，如果不需要 GUI 可以移除
+# PyQt5==5.15.11  # 注释掉，ARM 上可能有问题
+
+# 实时视频流依赖
+Flask-SocketIO==5.3.4
+python-socketio==5.9.0
+eventlet==0.33.3
+python-engineio==4.7.1
+
+# 额外的性能优化库（可选）
+# psutil==5.9.6
+
+

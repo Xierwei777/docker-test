@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>姿态识别 Demo</title>
+    <style>
+        .canvas-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+        }
+        #backgroundCanvas, #overlayCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none; /* 防止遮挡点击事件 */
+        }
+    </style>
+</head>
+<body>
+<h2>实时姿态识别</h2>
+<!-- 修改这一行，增加 style 使用 flex 排列 -->
+<div style="display: flex; align-items: center; gap: 20px;">
+    <video id="video" width="640" height="480" autoplay></video>
+
+    <!-- Canvas 容器 -->
+    <div class="canvas-container">
+        <canvas id="backgroundCanvas" width="640" height="480"></canvas>
+        <canvas id="overlayCanvas" width="640" height="480"></canvas>
+    </div>
+
+</div>
+<!-- Landmark 显示区域 -->
+    <div style="margin-left: 20px; font-family: monospace;">
+        <h3>关键点数据 (Landmarks)</h3>
+        <pre id="landmarks"
+             style="width: 400px; height: 480px; overflow: auto; background-color: #f0f0f0; padding: 10px;">
+        Waiting for data...
+    </pre>
+    </div>
+
+<script>
+    const video = document.getElementById('video');
+    const backgroundCanvas = document.getElementById('backgroundCanvas');
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const bgCtx = backgroundCanvas.getContext('2d');
+    const overlayCtx = overlayCanvas.getContext('2d');
+
+    // 打开摄像头
+    navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+            video.srcObject = stream;
+        });
+
+    // 持续绘制视频到 backgroundCanvas
+    function drawBackground() {
+        bgCtx.drawImage(video, 0, 0, 640, 480);
+        requestAnimationFrame(drawBackground); // 使用 RAF 更流畅
+    }
+    drawBackground();
+
+    function processNextFrame() {
+    // 从 backgroundCanvas 获取图像数据
+    const imageDataURL = backgroundCanvas.toDataURL('image/jpeg');
+
+    fetch('/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: imageDataURL.split(',')[1] })  // 去掉 data:image/jpeg;base64,
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById('landmarks').textContent = JSON.stringify(data.landmarks, null, 2);
+        const img = new Image();
+        img.onload = () => {
+            overlayCtx.clearRect(0, 0, 640, 480); // 清空上一帧的叠加内容
+            overlayCtx.drawImage(img, 0, 0, 640, 480);
+
+            // 绘制完成后，立即处理下一帧
+            requestAnimationFrame(processNextFrame);
+        };
+        img.src = 'data:image/jpeg;base64,' + data.processed_image;
+    })
+    .catch(err => {
+        console.error('分析失败:', err);
+        // 出错也继续下一轮
+        requestAnimationFrame(processNextFrame);
+    });
+}
+
+// 启动首次处理
+requestAnimationFrame(processNextFrame);
+
+</script>
+</body>
+</html>
